@@ -7,5 +7,5 @@ metadata:
 spec:
   chart:
     repository: oci://ghcr.io/stefanprodan/charts/podinfo
-    version: ~> 6.3
-  targetNamespace: apps
+    version: ~> 6
+  targetNamespace: default
