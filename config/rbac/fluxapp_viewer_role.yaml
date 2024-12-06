@@ -1,0 +1,23 @@
+# permissions for end users to view fluxapps.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  labels:
+    app.kubernetes.io/name: fluxer
+    app.kubernetes.io/managed-by: kustomize
+  name: fluxapp-viewer-role
+rules:
+- apiGroups:
+  - apps.kloudy.uk
+  resources:
+  - fluxapps
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - apps.kloudy.uk
+  resources:
+  - fluxapps/status
+  verbs:
+  - get
