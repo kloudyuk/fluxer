@@ -73,6 +73,7 @@ func (in *FluxApp) SetConditions(conditions []metav1.Condition) {
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
 // +kubebuilder:resource:shortName=fa
+// +kubebuilder:printcolumn:name="Chart",type=string,JSONPath=`.status.chart.name`
 // +kubebuilder:printcolumn:name="Version",type=string,JSONPath=`.status.chart.version`
 // +kubebuilder:printcolumn:name="Status",type=string,JSONPath=`.status.conditions[?(@.type=="Ready")].message`
 

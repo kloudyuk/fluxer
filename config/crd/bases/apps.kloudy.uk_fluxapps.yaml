@@ -17,6 +17,9 @@ spec:
   scope: Namespaced
   versions:
   - additionalPrinterColumns:
+    - jsonPath: .status.chart.name
+      name: Chart
+      type: string
     - jsonPath: .status.chart.version
       name: Version
       type: string

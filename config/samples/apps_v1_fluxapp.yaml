@@ -3,7 +3,7 @@ kind: FluxApp
 metadata:
   labels:
     app.kubernetes.io/managed-by: fluxer
-  name: podinfo
+  name: example
 spec:
   chart:
     repository: oci://ghcr.io/stefanprodan/charts/podinfo
