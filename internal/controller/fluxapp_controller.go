@@ -51,6 +51,15 @@ type FluxAppReconciler struct {
 // +kubebuilder:rbac:groups=apps.kloudy.uk,resources=fluxapps/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=apps.kloudy.uk,resources=fluxapps/finalizers,verbs=update
 
+// +kubebuilder:rbac:groups=image.toolkit.fluxcd.io,resources=imagerepositories;imagepolicies,verbs=get;list;watch;create;update;patch;delete;deletecollection
+// +kubebuilder:rbac:groups=image.toolkit.fluxcd.io,resources=imagerepositories/status;imagepolicies/status,verbs=get
+
+// +kubebuilder:rbac:groups=helm.toolkit.fluxcd.io,resources=helmreleases,verbs=get;list;watch;create;update;patch;delete;deletecollection
+// +kubebuilder:rbac:groups=helm.toolkit.fluxcd.io,resources=helmreleases/status,verbs=get
+
+// +kubebuilder:rbac:groups=source.toolkit.fluxcd.io,resources=helmrepositories,verbs=get;list;watch;create;update;patch;delete;deletecollection
+// +kubebuilder:rbac:groups=source.toolkit.fluxcd.io,resources=helmrepositories/status,verbs=get
+
 // Reconcile is part of the main kubernetes reconciliation loop which aims to
 // move the current state of the cluster closer to the desired state.
 // TODO(user): Modify the Reconcile function to compare the state specified by
