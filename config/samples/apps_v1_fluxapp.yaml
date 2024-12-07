@@ -1,8 +1,6 @@
 apiVersion: apps.kloudy.uk/v1
 kind: FluxApp
 metadata:
-  labels:
-    app.kubernetes.io/managed-by: fluxer
   name: example
 spec:
   chart:

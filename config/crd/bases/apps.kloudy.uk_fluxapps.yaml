@@ -92,7 +92,6 @@ spec:
                 required:
                 - name
                 - repository
-                - version
                 type: object
               conditions:
                 description: Conditions holds the conditions for the FluxApp.

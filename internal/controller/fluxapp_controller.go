@@ -18,6 +18,8 @@ package controller
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"net/url"
 	"path"
 	"strings"
@@ -41,10 +43,13 @@ import (
 
 const finalizer = "apps.kloudy.uk/finalizer"
 
+var errRequeue = errors.New("requeue")
+
 // FluxAppReconciler reconciles a FluxApp object
 type FluxAppReconciler struct {
 	client.Client
-	Scheme *runtime.Scheme
+	Scheme          *runtime.Scheme
+	ResourceManager *ResourceManager
 }
 
 // +kubebuilder:rbac:groups=apps.kloudy.uk,resources=fluxapps,verbs=get;list;watch;create;update;patch;delete
@@ -108,132 +113,94 @@ func (r *FluxAppReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 		}
 	}
 
-	// Always update the status
+	// Always patch the status before returning
+	p := client.MergeFrom(app.DeepCopy())
 	defer func() {
-		if err := r.Status().Update(ctx, app); err != nil {
+		if err := r.Status().Patch(ctx, app, p); err != nil {
 			log.Error(err, "unable to update FluxApp status")
 		}
 	}()
 
 	// Handle the chart ImageRepository object
-	imageRepo, err := handleImageRepository(ctx, r, app)
-	if err != nil {
+	if err := handleImageRepository(ctx, r, app); err != nil {
+		if errors.Is(err, errRequeue) {
+			return ctrl.Result{Requeue: true}, nil
+		}
 		return ctrl.Result{}, err
-	}
-	if imageRepo == nil {
-		return ctrl.Result{
-			RequeueAfter: 10 * time.Second,
-		}, nil
 	}
 
 	// Handle the chart ImagePolicy object
-	imagePolicy, err := handleImagePolicy(ctx, r, app, imageRepo)
-	if err != nil {
+	if err := handleImagePolicy(ctx, r, app); err != nil {
+		if errors.Is(err, errRequeue) {
+			return ctrl.Result{Requeue: true}, nil
+		}
 		return ctrl.Result{}, err
-	}
-	if imagePolicy == nil {
-		return ctrl.Result{
-			RequeueAfter: 10 * time.Second,
-		}, nil
 	}
 
 	// Handle the HelmRepository object
-	helmRepo, err := handleHelmRepository(ctx, r, app)
-	if err != nil {
+	if err := handleHelmRepository(ctx, r, app); err != nil {
+		if errors.Is(err, errRequeue) {
+			return ctrl.Result{Requeue: true}, nil
+		}
 		return ctrl.Result{}, err
-	}
-	if helmRepo == nil {
-		return ctrl.Result{
-			RequeueAfter: 10 * time.Second,
-		}, nil
 	}
 
 	// Handle the HelmRelease object
-	_, err = handleHelmRelease(ctx, r, app, helmRepo)
-	if err != nil {
+	if err := handleHelmRelease(ctx, r, app); err != nil {
+		if errors.Is(err, errRequeue) {
+			return ctrl.Result{Requeue: true}, nil
+		}
 		return ctrl.Result{}, err
 	}
 
+	// Return success
 	return ctrl.Result{}, nil
 }
 
 // Handle Flux ImageRepository object
-func handleImageRepository(ctx context.Context, r *FluxAppReconciler, app *appsv1.FluxApp) (*imagev1.ImageRepository, error) {
-	imageRepo := &imagev1.ImageRepository{
-		TypeMeta: metav1.TypeMeta{
-			Kind: imagev1.ImageRepositoryKind,
-		},
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      strings.Join([]string{app.Name, "chart"}, "-"),
-			Namespace: app.Namespace,
-		},
+func handleImageRepository(ctx context.Context, r *FluxAppReconciler, app *appsv1.FluxApp) error {
+	// Get the ImageRepository managed resource
+	mr, err := r.ResourceManager.Get(ctx, app, imagev1.ImageRepositoryKind)
+	if err != nil {
+		return err
 	}
-	exists := true
-	if err := r.Get(ctx, client.ObjectKeyFromObject(imageRepo), imageRepo); err != nil {
-		if client.IgnoreNotFound(err) != nil {
-			return nil, err
-		}
-		exists = false
+	imageRepo := mr.Object.(*imagev1.ImageRepository)
+	// Update the ImageRepository spec
+	provider, err := providerFromURL(app.Spec.Chart.Repository)
+	if err != nil {
+		return err
 	}
-	patch := client.MergeFrom(imageRepo.DeepCopy())
-	if exists {
+	parts := strings.Split(app.Spec.Chart.Repository, "://")
+	if len(parts) != 2 {
+		return fmt.Errorf("invalid chart repository URL: %s", app.Spec.Chart.Repository)
+	}
+	imageRepo.Spec = imagev1.ImageRepositorySpec{
+		Image:    parts[1],
+		Interval: metav1.Duration{Duration: 1 * time.Minute},
+		Provider: provider,
+	}
+	// Set the app chart status based on the ImageRepository object
+	if imageRepo.Spec.Image != "" {
 		app.Status.Chart.Repository = "oci://" + path.Dir(imageRepo.Spec.Image)
 		app.Status.Chart.Name = path.Base(imageRepo.Spec.Image)
 	}
-	url, err := url.Parse(app.Spec.Chart.Repository)
-	if err != nil {
-		return nil, err
-	}
-	provider, err := providerFromURL(app.Spec.Chart.Repository)
-	if err != nil {
-		return nil, err
-	}
-	imageRepo.Spec = imagev1.ImageRepositorySpec{
-		Image:    strings.TrimPrefix(app.Spec.Chart.Repository, url.Scheme+"://"),
-		Interval: metav1.Duration{Duration: 1 * time.Minute},
-		Provider: provider,
-		Insecure: url.Scheme == "http",
-	}
-	if err := controllerutil.SetControllerReference(app, imageRepo, r.Scheme); err != nil {
-		return nil, err
-	}
-	if exists {
-		err = r.Patch(ctx, imageRepo, patch)
-	} else {
-		err = r.Create(ctx, imageRepo)
-	}
-	return imageRepo, client.IgnoreAlreadyExists(err)
+	// Update the resource
+	return r.ResourceManager.Update(ctx, mr)
 }
 
 // Handle Flux ImagePolicy object
-func handleImagePolicy(ctx context.Context, r *FluxAppReconciler, app *appsv1.FluxApp, imageRepo *imagev1.ImageRepository) (*imagev1.ImagePolicy, error) {
-	imagePolicy := &imagev1.ImagePolicy{
-		TypeMeta: metav1.TypeMeta{
-			Kind: imagev1.ImagePolicyKind,
-		},
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      strings.Join([]string{app.Name, "chart"}, "-"),
-			Namespace: app.Namespace,
-		},
+func handleImagePolicy(ctx context.Context, r *FluxAppReconciler, app *appsv1.FluxApp) error {
+	// Get the ImagePolicy managed resource
+	mr, err := r.ResourceManager.Get(ctx, app, imagev1.ImagePolicyKind)
+	if err != nil {
+		return err
 	}
-	exists := true
-	if err := r.Get(ctx, client.ObjectKeyFromObject(imagePolicy), imagePolicy); err != nil {
-		if client.IgnoreNotFound(err) != nil {
-			return nil, err
-		}
-		exists = false
-	}
-	patch := client.MergeFrom(imagePolicy.DeepCopy())
-	if exists {
-		parts := strings.Split(imagePolicy.Status.LatestImage, ":")
-		if len(parts) == 2 {
-			app.Status.Chart.Version = parts[1]
-		}
-	}
+	imagePolicy := mr.Object.(*imagev1.ImagePolicy)
+	// Update the spec
 	imagePolicy.Spec = imagev1.ImagePolicySpec{
 		ImageRepositoryRef: meta.NamespacedObjectReference{
-			Name:      imageRepo.Name,
-			Namespace: imageRepo.Namespace,
+			Name:      r.ResourceManager.ImagePolicyName(app),
+			Namespace: app.Namespace,
 		},
 		Policy: imagev1.ImagePolicyChoice{
 			SemVer: &imagev1.SemVerPolicy{
@@ -241,83 +208,53 @@ func handleImagePolicy(ctx context.Context, r *FluxAppReconciler, app *appsv1.Fl
 			},
 		},
 	}
-	if err := controllerutil.SetControllerReference(app, imagePolicy, r.Scheme); err != nil {
-		return nil, err
+	// Add the latest image to the app status
+	if imagePolicy.Status.LatestImage != "" {
+		parts := strings.Split(imagePolicy.Status.LatestImage, ":")
+		if len(parts) != 2 {
+			return fmt.Errorf("invalid image reference: %s", imagePolicy.Status.LatestImage)
+		}
+		app.Status.Chart.Version = parts[1]
 	}
-	var err error
-	if exists {
-		err = r.Patch(ctx, imagePolicy, patch)
-	} else {
-		err = r.Create(ctx, imagePolicy)
-	}
-	return imagePolicy, client.IgnoreAlreadyExists(err)
+	// Update the resource
+	return r.ResourceManager.Update(ctx, mr)
 }
 
 // Handle Flux HelmRepository object
-func handleHelmRepository(ctx context.Context, r *FluxAppReconciler, app *appsv1.FluxApp) (*sourcev1.HelmRepository, error) {
-	if app.Status.Chart.Repository == "" {
-		return nil, nil
+func handleHelmRepository(ctx context.Context, r *FluxAppReconciler, app *appsv1.FluxApp) error {
+	// Get the HelmRepository managed resource
+	mr, err := r.ResourceManager.Get(ctx, app, sourcev1.HelmRepositoryKind)
+	if err != nil {
+		return err
 	}
-	sr := strings.NewReplacer(".", "-", "/", "-")
-	helmRepository := &sourcev1.HelmRepository{
-		TypeMeta: metav1.TypeMeta{
-			Kind: sourcev1.HelmRepositoryKind,
-		},
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      sr.Replace(strings.TrimPrefix(app.Status.Chart.Repository, "oci://")),
-			Namespace: app.Namespace,
-		},
-	}
-	exists := true
-	if err := r.Get(ctx, client.ObjectKeyFromObject(helmRepository), helmRepository); err != nil {
-		if client.IgnoreNotFound(err) != nil {
-			return nil, err
-		}
-		exists = false
-	}
-	if exists {
-		return helmRepository, nil
-	}
+	helmRepository := mr.Object.(*sourcev1.HelmRepository)
+	// Update the spec
 	provider, err := providerFromURL(app.Status.Chart.Repository)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	helmRepository.Spec = sourcev1.HelmRepositorySpec{
 		URL:      app.Status.Chart.Repository,
 		Type:     "oci",
 		Provider: provider,
 	}
-	if err := controllerutil.SetControllerReference(app, helmRepository, r.Scheme); err != nil {
-		return nil, err
-	}
-	return helmRepository, client.IgnoreAlreadyExists(r.Create(ctx, helmRepository))
+	// Update the resource
+	return r.ResourceManager.Update(ctx, mr)
 }
 
 // Handle Flux HelmRelease object
-func handleHelmRelease(ctx context.Context, r *FluxAppReconciler, app *appsv1.FluxApp, helmRepo *sourcev1.HelmRepository) (*helmv2.HelmRelease, error) {
+func handleHelmRelease(ctx context.Context, r *FluxAppReconciler, app *appsv1.FluxApp) error {
+	// If we don't have the info needed for the HelmRelease, requeue
 	if app.Status.Chart.Repository == "" || app.Status.Chart.Name == "" || app.Status.Chart.Version == "" {
-		return nil, nil
+		return errRequeue
 	}
-	helmRelease := &helmv2.HelmRelease{
-		TypeMeta: metav1.TypeMeta{
-			Kind: helmv2.HelmReleaseKind,
-		},
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      app.Name,
-			Namespace: app.Namespace,
-		},
+	// Get the HelmRelease managed resource
+	mr, err := r.ResourceManager.Get(ctx, app, helmv2.HelmReleaseKind)
+	if err != nil {
+		return err
 	}
-	exists := true
-	if err := r.Get(ctx, client.ObjectKeyFromObject(helmRelease), helmRelease); err != nil {
-		if client.IgnoreNotFound(err) != nil {
-			return nil, err
-		}
-		exists = false
-	}
-	patch := client.MergeFrom(helmRelease.DeepCopy())
-	if exists {
-		conditions.SetMirror(app, meta.ReadyCondition, helmRelease)
-	}
+	helmRelease := mr.Object.(*helmv2.HelmRelease)
+	// Update the spec
 	targetNS := app.Spec.TargetNamespace
 	if targetNS == "" {
 		targetNS = app.Namespace
@@ -329,8 +266,8 @@ func handleHelmRelease(ctx context.Context, r *FluxAppReconciler, app *appsv1.Fl
 				Version: app.Status.Chart.Version,
 				SourceRef: helmv2.CrossNamespaceObjectReference{
 					Kind:      "HelmRepository",
-					Name:      helmRepo.Name,
-					Namespace: helmRepo.Namespace,
+					Name:      r.ResourceManager.HelmRepositoryName(app),
+					Namespace: app.Namespace,
 				},
 			},
 		},
@@ -354,16 +291,8 @@ func handleHelmRelease(ctx context.Context, r *FluxAppReconciler, app *appsv1.Fl
 			CRDs: helmv2.CreateReplace,
 		},
 	}
-	if err := controllerutil.SetControllerReference(app, helmRelease, r.Scheme); err != nil {
-		return nil, err
-	}
-	var err error
-	if exists {
-		err = r.Patch(ctx, helmRelease, patch)
-	} else {
-		err = r.Create(ctx, helmRelease)
-	}
-	return helmRelease, client.IgnoreAlreadyExists(err)
+	conditions.SetMirror(app, meta.ReadyCondition, helmRelease, conditions.WithFallbackValue(false, meta.ProgressingReason, "HelmRelease is not ready"))
+	return r.ResourceManager.Update(ctx, mr)
 }
 
 func providerFromURL(s string) (string, error) {

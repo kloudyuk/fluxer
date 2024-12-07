@@ -57,7 +57,7 @@ type FluxAppStatus struct {
 type ChartStatus struct {
 	Repository string `json:"repository"`
 	Name       string `json:"name"`
-	Version    string `json:"version"`
+	Version    string `json:"version,omitempty"`
 }
 
 // GetConditions returns the status conditions of the object.
