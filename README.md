@@ -35,7 +35,7 @@ To deploy the controller to a kind cluster:
 # Create a kind cluster
 kind create cluster
 
-# Install the Flux controllers
+# Install the Flux controllers inc. the image automation controllers
 make flux
 
 # Build and deploy the CRD & controller
