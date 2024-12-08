@@ -1,5 +1,5 @@
 # Image URL to use all building/pushing image targets
-IMG ?= 323333154476.dkr.ecr.eu-west-2.amazonaws.com/images/fluxer
+IMG ?= kloudy.uk/fluxer
 # ENVTEST_K8S_VERSION refers to the version of kubebuilder assets to be downloaded by envtest binary.
 ENVTEST_K8S_VERSION = 1.31.0
 
@@ -217,10 +217,4 @@ endef
 
 .PHONY: flux
 flux:
-	flux bootstrap github \
-		--token-auth \
-		--owner=kloudyuk \
-		--repository=kind \
-		--branch=main \
-		--path=clusters/dev \
-		--components-extra=image-reflector-controller,image-automation-controller
+	flux install --components-extra="image-reflector-controller,image-automation-controller"

@@ -1,114 +1,73 @@
 # fluxer
-// TODO(user): Add simple overview of use/purpose
+
+A Kubernetes controller example
 
 ## Description
-// TODO(user): An in-depth paragraph about your project and overview of use
 
-## Getting Started
+Fluxer is a pointless and unnecessary controller created purely to showcase various techniques that can be used in a controller.
+
+It includes a minimal `FluxApp` CRD which is used to generate a Flux `HelmRelease` from a public OCI chart repo. This example demonstrates how a CRD can be used to provide a simple interface to manage other resources.
+
+> [!CAUTION]
+> This isn't something you'd want to use in a real environment. You should just use the Flux resources directly.
+
+The `FluxApp` resource creates and manages the following Flux resources:
+
+- `ImageRepository` - for scanning the OCI repo for available chart versions
+- `ImagePolicy` - selects a version based on a SemVer version or version constraint
+- `HelmRepository` - source to retrieve Helm charts from
+- `HelmRelease` - installs the chart in the cluster
+
+## Deployment
 
 ### Prerequisites
-- go version v1.22.0+
-- docker version 17.03+.
-- kubectl version v1.11.3+.
-- Access to a Kubernetes v1.11.3+ cluster.
 
-### To Deploy on the cluster
-**Build and push your image to the location specified by `IMG`:**
+- [Kind](https://kind.sigs.k8s.io/) - `brew install kind`
+- [Docker](https://www.docker.com/)
+- [Go](https://go.dev/) - `brew install go`
+- [Flux CLI](https://fluxcd.io/flux/cmd/) - `brew install fluxcd/tap/flux`
 
-```sh
-make docker-build docker-push IMG=<some-registry>/fluxer:tag
-```
+### Install
 
-**NOTE:** This image ought to be published in the personal registry you specified.
-And it is required to have access to pull the image from the working environment.
-Make sure you have the proper permission to the registry if the above commands don’t work.
-
-**Install the CRDs into the cluster:**
+To deploy the controller to a kind cluster:
 
 ```sh
-make install
+# Create a kind cluster
+kind create cluster
+
+# Install the Flux controllers
+make flux
+
+# Build and deploy the CRD & controller
+make deploy
 ```
 
-**Deploy the Manager to the cluster with the image specified by `IMG`:**
+The controller will be installed to the `fluxer-system` namespace. You can tail the logs to ensure the controller started successfully e.g.
 
 ```sh
-make deploy IMG=<some-registry>/fluxer:tag
+kubectl -n fluxer-system -l app.kubernetes.io/name=fluxer logs -f
 ```
 
-> **NOTE**: If you encounter RBAC errors, you may need to grant yourself cluster-admin
-privileges or be logged in as admin.
+## Usage
 
-**Create instances of your solution**
-You can apply the samples (examples) from the config/sample:
+### Example
 
-```sh
-kubectl apply -k config/samples/
+```yaml
+apiVersion: apps.kloudy.uk/v1
+kind: FluxApp
+metadata:
+  name: example
+spec:
+  chart:
+    repository: oci://ghcr.io/stefanprodan/charts/podinfo
+    version: ~> 6
+  targetNamespace: default
 ```
 
->**NOTE**: Ensure that the samples has default values to test it out.
+### Spec
 
-### To Uninstall
-**Delete the instances (CRs) from the cluster:**
+`chart.repository` (*required*) - Defines the repository containg the helm chart. This example controller only supports public OCI chart repos.
 
-```sh
-kubectl delete -k config/samples/
-```
+`chart.version` (*optional*) - The chart version to use. Must be a valid SemVer version or version constraint. If omitted, `*` will be used which gets the latest version.
 
-**Delete the APIs(CRDs) from the cluster:**
-
-```sh
-make uninstall
-```
-
-**UnDeploy the controller from the cluster:**
-
-```sh
-make undeploy
-```
-
-## Project Distribution
-
-Following are the steps to build the installer and distribute this project to users.
-
-1. Build the installer for the image built and published in the registry:
-
-```sh
-make build-installer IMG=<some-registry>/fluxer:tag
-```
-
-NOTE: The makefile target mentioned above generates an 'install.yaml'
-file in the dist directory. This file contains all the resources built
-with Kustomize, which are necessary to install this project without
-its dependencies.
-
-2. Using the installer
-
-Users can just run kubectl apply -f <URL for YAML BUNDLE> to install the project, i.e.:
-
-```sh
-kubectl apply -f https://raw.githubusercontent.com/<org>/fluxer/<tag or branch>/dist/install.yaml
-```
-
-## Contributing
-// TODO(user): Add detailed information on how you would like others to contribute to this project
-
-**NOTE:** Run `make help` for more information on all potential `make` targets
-
-More information can be found via the [Kubebuilder Documentation](https://book.kubebuilder.io/introduction.html)
-
-## License
-
-Copyright 2024.
-
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
-
-    http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
-
+`targetNamespace` (*optional*) - Sets the `targetNamespace` in the `HelmRelease`. If omitted, the `FluxApp` namespace will be used.
