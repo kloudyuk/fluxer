@@ -71,3 +71,24 @@ spec:
 `chart.version` (*optional*) - The chart version to use. Must be a valid SemVer version or version constraint. If omitted, `*` will be used which gets the latest version.
 
 `targetNamespace` (*optional*) - Sets the `targetNamespace` in the `HelmRelease`. If omitted, the `FluxApp` namespace will be used.
+
+## Controller Design
+
+### Resource Manager
+
+The controller is managing multiple Flux resources in the reconcile loop. For each of these resources we need a way to fetch the Flux resource from the server (if it exists) or create the resource if it doesn't exist. Once we've made any necessary changes to the resource we need to update the resource in the server. To avoid repeating similar logic for each Flux resource, a [ResourceManager](./internal/controller/fluxapp_resource_manager.go) has been implemented that can work with any of the required Flux types by leveraging the [client.Object](https://github.com/kubernetes-sigs/controller-runtime/blob/main/pkg/client/object.go) interface.
+
+### OwnerReference / ControllerReference
+
+As the fluxer controller is managing Flux resources, we need ensure the fluxer controller is marked as the owner of the Flux resources for the following reasons:
+
+1. Garbage collection - when the `FluxApp` is deleted, the Flux resources should also be removed.
+2. Trigger reconcilliation of the `FluxApp` if any of the flux resources are updated.
+
+This is handled by the [ResourceManager](./internal/controller/fluxapp_resource_manager.go#L70-72).
+
+### Patch vs Update
+
+The fluxer controller is creating resources that will be processed by the Flux controllers. The Flux controllers will make updates to these resources which can lead to conflicts e.g. if the fluxer controller tries to update a resource that has been modified by a Flux controller since it was fetched from the server. To avoid this (and because it's good practice and more efficient), we patch resources rather than updating them. This is also handled by the [ResourceManager](./internal/controller/fluxapp_resource_manager.go#L32-37).
+
+When the `ResourceManager` fetches an object from the server, if the object exists, [a copy of the original object is stored](./internal/controller/fluxapp_resource_manager.go#L75-88) to be used as the patch base later.
